@@ -16,75 +16,76 @@ import seaborn as sns
 import json
 
 # ==================================
-# Global Constants
+# Global Constants for MFCCs
 # ==================================
 SAMPLE_RATE = 22050
-N_MFCC = 40        # Number of MFCC coefficients
+N_MFCC = 40        # Number of MFCC coefficients - THIS IS THE KEY CHANGE FROM N_MELS
 N_FFT = 2048       # Window size for FFT
 HOP_LENGTH = 512   # Hop length for FFT
 MAX_TIME_STEPS = 400 # Max number of time steps (width of the feature image)
 
 # ==================================
-# Custom CNN Model Definition
+# Custom CNN Model Definition (with dynamic linear layer size)
 # ==================================
 class CustomCNN(nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes=2): # Added num_classes parameter for flexibility
         super(CustomCNN, self).__init__()
         
-        input_feature_height = N_MFCC
-        input_feature_width = MAX_TIME_STEPS
-
+        # Define the convolutional feature extractor
         self.features = nn.Sequential(
-            # Block 1
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            # Block 1: Input (1, N_MFCC, MAX_TIME_STEPS) e.g., (1, 40, 400)
+            nn.Conv2d(1, 32, kernel_size=3, padding=1), # Output: (32, 40, 400)
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), 
+            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), # Output: (32, 20, 200)
             nn.BatchNorm2d(32),
             nn.ReLU(),
 
             # Block 2
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1), # Output: (64, 20, 200)
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1), # Output: (64, 10, 100)
             nn.BatchNorm2d(64),
             nn.ReLU(),
 
             # Block 3
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1), # Output: (128, 10, 100)
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1), # Output: (128, 5, 50)
             nn.BatchNorm2d(128),
             nn.ReLU(),
 
             # Block 4
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1), # Output: (256, 5, 50)
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1), # Output: (256, 3, 25)
             nn.BatchNorm2d(256),
             nn.ReLU(),
         )
 
         # Dynamically calculate the flattened size for the linear layer
-        # This is the crucial fix for the RuntimeError
-        with torch.no_grad(): # Ensure no gradients are computed for this dummy pass
-            dummy_input = torch.rand(1, 1, input_feature_height, input_feature_width)
+        # This is the most reliable way to avoid shape mismatch errors
+        with torch.no_grad(): # Disable gradient computation for this dummy pass
+            # Create a dummy input tensor matching the expected input shape for the model
+            # Batch size is 1 for this calculation.
+            dummy_input = torch.rand(1, 1, N_MFCC, MAX_TIME_STEPS) 
             dummy_output = self.features(dummy_input)
-            # The .numel() method returns the total number of elements in the tensor.
-            # We divide by the dummy batch size (1) to get the size for a single sample.
+            # Calculate the number of elements per sample after flattening
+            # dummy_output.numel() is total elements, divide by batch size (1)
             linear_input_size = dummy_output.numel() // dummy_output.shape[0] 
         
-        print(f"Calculated linear layer input size: {linear_input_size}") # Print to verify
+        print(f"Calculated linear layer input size: {linear_input_size}") # Confirm the calculated size
 
+        # Define the classifier head
         self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(linear_input_size, 64),
+            nn.Flatten(), # Flattens the output of features (e.g., from (256, 3, 25) to (19200))
+            nn.Linear(linear_input_size, 64), # Connect to the first fully connected layer
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(64, num_classes) # Output layer for classification
+            nn.Dropout(0.5), # Regularization
+            nn.Linear(64, num_classes) # Output layer for classification (e.g., 2 classes)
         )
 
     def forward(self, x):
@@ -92,7 +93,7 @@ class CustomCNN(nn.Module):
         return self.classifier(x)
 
 # ==================================
-# Audio Dataset Class
+# Audio Dataset Class (adapted for MFCCs)
 # ==================================
 class AudioDataset(Dataset):
     def __init__(self, root_dir):
@@ -113,14 +114,13 @@ class AudioDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    # Convert audio to MFCC features
     def __getitem__(self, idx):
         file_path, label = self.samples[idx]
 
         try:
             audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
 
-            # Calculate MFCCs
+            # Calculate MFCCs (instead of Mel Spectrogram)
             mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC, n_fft=N_FFT, hop_length=HOP_LENGTH)
 
             # Resize MFCCs to a fixed size (MAX_TIME_STEPS wide, N_MFCC high)
@@ -138,9 +138,8 @@ class AudioDataset(Dataset):
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
             # Return a zero tensor and a -1 label if an error occurs during loading/processing
-            # This allows the DataLoader to continue, and the main loop to skip invalid samples
             feature_data = torch.zeros((1, N_MFCC, MAX_TIME_STEPS), dtype=torch.float32)
-            label = -1
+            label = -1 # Use -1 to mark invalid samples
         return feature_data, label
 
 # ==================================
@@ -150,12 +149,10 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    # Changed project name slightly to indicate it's the fixed version
-    run = wandb.init(project="audio-classification-mfcc-fixed", config=vars(args)) 
+    run = wandb.init(project="audio-classification-mfcc-revised", config=vars(args)) # New project name
     config = wandb.config
 
     # Define paths to your dataset directories
-    # Assuming 'datasets/train' and 'datasets/test' are relative to the script's location
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
     train_path = os.path.join(script_dir, 'datasets', 'train')
     test_path = os.path.join(script_dir, 'datasets', 'test')
@@ -190,8 +187,7 @@ def main(args):
     model = CustomCNN(num_classes=num_classes)
 
     # Print model summary using torchinfo
-    # Input shape: (batch_size, channels, height, width)
-    # This will now correctly reflect the calculated linear_input_size
+    # Input shape: (batch_size, channels, height, width) for torchinfo
     summary = torchinfo.summary(model, input_size=(config.batch_size, 1, N_MFCC, MAX_TIME_STEPS))
     run.config['total_params'] = summary.total_params
     run.config['mult_adds'] = summary.total_mult_adds
@@ -220,9 +216,9 @@ def main(args):
         total_train_loss = 0.0
 
         for batch_idx, (inputs, labels) in enumerate(train_loader):
-            # Skip batches where data loading failed (label == -1)
+            # Filter out samples where data loading failed (label == -1)
             valid_indices = (labels != -1)
-            if not valid_indices.any():
+            if not valid_indices.any(): # If all samples in batch failed
                 # print(f"Skipping training batch {batch_idx} due to all samples having label -1.")
                 continue
 
@@ -328,15 +324,11 @@ def main(args):
         return
 
     # Determine target names for classification report and confusion matrix
-    # Use actual class names from the dataset if available, otherwise default
     if len(test_data.classes) == num_classes:
         target_names = test_data.classes
     else:
-        # Fallback if there's a mismatch (e.g., test set only has a subset of classes)
-        # Get unique labels present in the true data and map them
         unique_true_labels = np.unique(y_true)
         target_names = [f'Class {l}' for l in unique_true_labels]
-
 
     # ==================================
     # Evaluation Metrics and Visualizations
@@ -378,6 +370,7 @@ def main(args):
     plt.close()
 
     # ROC Curve (only applicable for binary classification)
+    # This part should be updated to handle multi-class if num_classes > 2
     if num_classes == 2:
         print("\n─────── ROC Curve ───────")
         try:
