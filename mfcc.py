@@ -28,56 +28,56 @@ MAX_TIME_STEPS = 400 # Max number of time steps (width of the feature image)
 # Custom CNN Model Definition
 # ==================================
 class CustomCNN(nn.Module):
-    def __init__(self, num_classes=2): # Added num_classes parameter
+    def __init__(self, num_classes=2):
         super(CustomCNN, self).__init__()
         
-        # Input height is N_MFCC for MFCC features
-        input_feature_height = N_MFCC # This will be 40
+        input_feature_height = N_MFCC
+        input_feature_width = MAX_TIME_STEPS
 
         self.features = nn.Sequential(
-            # Input channel is 1, and height is N_MFCC
+            # Block 1
             nn.Conv2d(1, 32, kernel_size=3, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), # Height becomes N_MFCC / 2
+            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), 
             nn.BatchNorm2d(32),
             nn.ReLU(),
 
+            # Block 2
             nn.Conv2d(32, 64, kernel_size=3, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1), # Height becomes N_MFCC / 4
+            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(),
 
+            # Block 3
             nn.Conv2d(64, 128, kernel_size=3, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1), # Height becomes N_MFCC / 8
+            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(),
 
+            # Block 4
             nn.Conv2d(128, 256, kernel_size=3, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1), # Height becomes N_MFCC / 16
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1),
             nn.BatchNorm2d(256),
             nn.ReLU(),
         )
 
-        # Calculate the flattened size dynamically for the linear layer
-        # After 4 blocks with stride 2:
-        # Final Height = initial_height // (2^4) = N_MFCC // 16
-        # Final Width = MAX_TIME_STEPS // (2^4) = 400 // 16 = 25
-
-        # For N_MFCC = 40:
-        # final_conv_height = 40 // 16 = 2 (integer division)
-        # final_conv_width = 400 // 16 = 25
-        final_conv_height = input_feature_height // (2**4)
-        final_conv_width = MAX_TIME_STEPS // (2**4)
+        # Dynamically calculate the flattened size for the linear layer
+        # This is the crucial fix for the RuntimeError
+        with torch.no_grad(): # Ensure no gradients are computed for this dummy pass
+            dummy_input = torch.rand(1, 1, input_feature_height, input_feature_width)
+            dummy_output = self.features(dummy_input)
+            # The .numel() method returns the total number of elements in the tensor.
+            # We divide by the dummy batch size (1) to get the size for a single sample.
+            linear_input_size = dummy_output.numel() // dummy_output.shape[0] 
         
-        # The linear layer receives 256 channels * final_conv_height * final_conv_width
-        linear_input_size = 256 * final_conv_height * final_conv_width
+        print(f"Calculated linear layer input size: {linear_input_size}") # Print to verify
 
         self.classifier = nn.Sequential(
             nn.Flatten(),
@@ -150,7 +150,8 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    run = wandb.init(project="audio-classification-mfcc", config=vars(args))
+    # Changed project name slightly to indicate it's the fixed version
+    run = wandb.init(project="audio-classification-mfcc-fixed", config=vars(args)) 
     config = wandb.config
 
     # Define paths to your dataset directories
@@ -190,6 +191,7 @@ def main(args):
 
     # Print model summary using torchinfo
     # Input shape: (batch_size, channels, height, width)
+    # This will now correctly reflect the calculated linear_input_size
     summary = torchinfo.summary(model, input_size=(config.batch_size, 1, N_MFCC, MAX_TIME_STEPS))
     run.config['total_params'] = summary.total_params
     run.config['mult_adds'] = summary.total_mult_adds
@@ -334,10 +336,6 @@ def main(args):
         # Get unique labels present in the true data and map them
         unique_true_labels = np.unique(y_true)
         target_names = [f'Class {l}' for l in unique_true_labels]
-        # Or, if you know the mapping, you could reconstruct them
-        # E.g., if label_map is {'real': 0, 'fake': 1}
-        # label_to_name = {v: k for k, v in test_data.label_map.items()}
-        # target_names = [label_to_name[l] for l in unique_true_labels]
 
 
     # ==================================
