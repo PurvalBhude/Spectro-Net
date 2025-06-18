@@ -15,246 +15,284 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import json
 
-# constants which I am using in this
+# ==================================
+# Global Constants for MFCCs and Mel-spectrogram
+# ==================================
 SAMPLE_RATE = 22050
-N_MELS = 128      # Number of Mel bands
-N_MFCC = 40       # Number of MFCC coefficients
-N_FFT = 2048
-HOP_LENGTH = 512
-MAX_TIME_STEPS = 400 # Max time steps (width of the feature image)
+N_MFCC = 40        # Number of MFCC coefficients
+N_MELS = 128       # Number of Mel bands - NEW CONSTANT
+N_FFT = 2048       # Window size for FFT
+HOP_LENGTH = 512   # Hop length for FFT
+MAX_TIME_STEPS = 400 # Max number of time steps (width of the feature image)
 
+# ==================================
+# Custom CNN Model Definition (with dynamic linear layer size)
+# ==================================
 class CustomCNN(nn.Module):
-    def __init__(self):
+    def __init__(self, num_classes=2): # Added num_classes parameter for flexibility
         super(CustomCNN, self).__init__()
-        # The input height is now N_MELS + N_MFCC
-        input_height = N_MELS + N_MFCC # 128 + 40 = 168
-
+        
+        # Define the convolutional feature extractor
         self.features = nn.Sequential(
-            # Input channel is still 1, but height is now (N_MELS + N_MFCC)
-            nn.Conv2d(1, 32, kernel_size=3, padding=1),
+            # Block 1: Input (1, N_MELS + N_MFCC, MAX_TIME_STEPS) e.g., (1, 168, 400)
+            nn.Conv2d(1, 32, kernel_size=3, padding=1), # Output: (32, 168, 400)
             nn.BatchNorm2d(32),
             nn.ReLU(),
-            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), # Height becomes (input_height/2)
+            nn.Conv2d(32, 32, kernel_size=3, stride=2, padding=1), # Output: (32, 84, 200)
             nn.BatchNorm2d(32),
             nn.ReLU(),
 
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            # Block 2
+            nn.Conv2d(32, 64, kernel_size=3, padding=1), # Output: (64, 84, 200)
             nn.BatchNorm2d(64),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1), # Height becomes (input_height/4)
+            nn.Conv2d(64, 64, kernel_size=3, stride=2, padding=1), # Output: (64, 42, 100)
             nn.BatchNorm2d(64),
             nn.ReLU(),
 
-            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            # Block 3
+            nn.Conv2d(64, 128, kernel_size=3, padding=1), # Output: (128, 42, 100)
             nn.BatchNorm2d(128),
             nn.ReLU(),
-            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1), # Height becomes (input_height/8)
+            nn.Conv2d(128, 128, kernel_size=3, stride=2, padding=1), # Output: (128, 21, 50)
             nn.BatchNorm2d(128),
             nn.ReLU(),
 
-            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            # Block 4
+            nn.Conv2d(128, 256, kernel_size=3, padding=1), # Output: (256, 21, 50)
             nn.BatchNorm2d(256),
             nn.ReLU(),
-            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1), # Height becomes (input_height/16)
+            nn.Conv2d(256, 256, kernel_size=3, stride=2, padding=1), # Output: (256, 11, 25) (approx due to ceil/floor of 21/2)
             nn.BatchNorm2d(256),
             nn.ReLU(),
         )
 
-        # Calculate the flattened size dynamically
-        # After 4 stride-2 convolutions:
-        # Final Height = (initial_height / (2^4)) = (N_MELS + N_MFCC) / 16
-        # Final Width = (MAX_TIME_STEPS / (2^4)) = MAX_TIME_STEPS / 16
-        final_conv_height = (input_height // 16) # (128 + 40) // 16 = 168 // 16 = 10
-        final_conv_width = MAX_TIME_STEPS // 16 # 400 // 16 = 25
+        # Dynamically calculate the flattened size for the linear layer
+        # This is the most reliable way to avoid shape mismatch errors
+        with torch.no_grad(): # Disable gradient computation for this dummy pass
+            # Create a dummy input tensor matching the expected input shape for the model
+            # Batch size is 1 for this calculation.
+            dummy_input = torch.rand(1, 1, N_MELS + N_MFCC, MAX_TIME_STEPS) 
+            dummy_output = self.features(dummy_input)
+            # Calculate the number of elements per sample after flattening
+            # dummy_output.numel() is total elements, divide by batch size (1)
+            linear_input_size = dummy_output.numel() // dummy_output.shape[0] 
+        
+        print(f"Calculated linear layer input size: {linear_input_size}") # Confirm the calculated size
 
+        # Define the classifier head
         self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(256 * final_conv_height * final_conv_width, 64),
+            nn.Flatten(), # Flattens the output of features
+            nn.Linear(linear_input_size, 64), # Connect to the first fully connected layer
             nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(64, 7) # as there are two classes
+            nn.Dropout(0.5), # Regularization
+            nn.Linear(64, num_classes) # Output layer for classification (e.g., 2 classes)
         )
 
     def forward(self, x):
         x = self.features(x)
         return self.classifier(x)
 
-# here i am loading the dataset
+# ==================================
+# Audio Dataset Class (adapted for MFCCs and Mel-spectrogram)
+# ==================================
 class AudioDataset(Dataset):
     def __init__(self, root_dir):
         self.samples = []
         self.label_map = {}
 
+        # Scan root_dir for subdirectories (classes)
         for idx, class_name in enumerate(sorted(os.listdir(root_dir))):
             class_path = os.path.join(root_dir, class_name)
             if os.path.isdir(class_path):
                 self.label_map[class_name] = idx
+                # Scan each class directory for .wav files
                 for file_name in os.listdir(class_path):
                     if file_name.endswith('.wav'):
                         self.samples.append((os.path.join(class_path, file_name), idx))
-        self.classes = sorted(self.label_map.keys()) # Store class names
+        self.classes = sorted(self.label_map.keys()) # Store class names for evaluation
 
     def __len__(self):
         return len(self.samples)
 
-    # conversion of audio to combined Mel spectrogram and MFCC
     def __getitem__(self, idx):
         file_path, label = self.samples[idx]
-
+        
         try:
             audio, sr = librosa.load(file_path, sr=SAMPLE_RATE)
 
-            # Calculate Mel spectrogram
+            # Calculate Mel Spectrogram
             mel_spec = librosa.feature.melspectrogram(y=audio, sr=sr, n_mels=N_MELS, n_fft=N_FFT, hop_length=HOP_LENGTH)
             mel_spec = librosa.power_to_db(mel_spec, ref=np.max)
 
             # Calculate MFCCs
             mfcc = librosa.feature.mfcc(y=audio, sr=sr, n_mfcc=N_MFCC, n_fft=N_FFT, hop_length=HOP_LENGTH)
 
-            # Resize both to the target time steps and their respective feature dimensions
-            mel_spec = cv2.resize(mel_spec, (MAX_TIME_STEPS, N_MELS)) # (400, 128)
-            mfcc = cv2.resize(mfcc, (MAX_TIME_STEPS, N_MFCC))         # (400, 40)
+            # Resize Mel-spectrogram and MFCCs to fixed sizes
+            # Note: OpenCV's resize expects (width, height)
+            mel_spec = cv2.resize(mel_spec, (MAX_TIME_STEPS, N_MELS)) # Shape: (N_MELS, MAX_TIME_STEPS)
+            mfcc = cv2.resize(mfcc, (MAX_TIME_STEPS, N_MFCC))         # Shape: (N_MFCC, MAX_TIME_STEPS)
 
-            # Normalize both features independently
-            mel_spec = (mel_spec - np.mean(mel_spec)) / (np.std(mel_spec) + 1e-8) # Add small epsilon to avoid div by zero
+            # Normalization (mean 0, std 1) with epsilon for stability
+            mel_spec = (mel_spec - np.mean(mel_spec)) / (np.std(mel_spec) + 1e-8)
             mfcc = (mfcc - np.mean(mfcc)) / (np.std(mfcc) + 1e-8)
 
-            # Vertically stack the features
-            # Resulting shape: (N_MELS + N_MFCC, MAX_TIME_STEPS) -> (128 + 40, 400) = (168, 400)
-            combined_features = np.vstack((mel_spec, mfcc))
+            # Vertically stack Mel-spectrogram and MFCCs
+            # Resulting shape: (N_MELS + N_MFCC, MAX_TIME_STEPS)
+            combined_features = np.vstack((mel_spec, mfcc)) 
 
-            # Convert to tensor and add a channel dimension
-            # Shape: (1, N_MELS + N_MFCC, MAX_TIME_STEPS) -> (1, 168, 400)
-            combined_features = torch.from_numpy(combined_features).float().unsqueeze(0)
+            # Convert to PyTorch tensor and add a channel dimension (for CNN input)
+            # Shape becomes: (1, N_MELS + N_MFCC, MAX_TIME_STEPS)
+            feature_data = torch.from_numpy(combined_features).float().unsqueeze(0)
 
         except Exception as e:
             print(f"Error processing {file_path}: {e}")
-            # Return a zero tensor with the correct combined shape if an error occurs
-            combined_features = torch.zeros((1, N_MELS + N_MFCC, MAX_TIME_STEPS), dtype=torch.float32)
-            label = -1
-        return combined_features, label
+            # Return a zero tensor and a -1 label if an error occurs during loading/processing
+            feature_data = torch.zeros((1, N_MELS + N_MFCC, MAX_TIME_STEPS), dtype=torch.float32)
+            label = -1 # Use -1 to mark invalid samples
+        return feature_data, label
 
+# ==================================
+# Main Training and Evaluation Function
+# ==================================
 def main(args):
-    print("code started")
-    # Changed project name to reflect combined features
+    print("Code execution started.")
+
+    # Initialize Weights & Biases run
     run = wandb.init(project="iiit_hyerabad_combined", config=vars(args))
     config = wandb.config
 
+    # Define paths to your dataset directories
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
-    train_path = os.path.join(script_dir, 'datasets/train')
-    test_path = os.path.join(script_dir, 'datasets/test')
+    train_path = os.path.join(script_dir, 'datasets', 'train')
+    test_path = os.path.join(script_dir, 'datasets', 'test')
 
-    print("data loading initiated")
+    print("Data loading initiated...")
 
+    # Create dataset instances
     train_data = AudioDataset(train_path)
     test_data = AudioDataset(test_path)
 
-    # Pass class names to wandb config
+    # Determine the number of classes from the training dataset
+    num_classes = len(train_data.classes)
+    run.config['num_classes'] = num_classes
+
+    # Log class names to W&B config
     if hasattr(train_data, 'classes'):
         run.config['class_names'] = train_data.classes
+        print(f"Detected classes: {train_data.classes}")
     else:
         print("Warning: Class names not found in dataset. Ensure AudioDataset sets 'self.classes'.")
 
 
-    print("data loaded")
+    print(f"Number of training samples: {len(train_data)}")
+    print(f"Number of test samples: {len(test_data)}")
+    print("Data loading complete.")
 
+    # Create DataLoaders
     train_loader = DataLoader(train_data, batch_size=config.batch_size, shuffle=True)
     test_loader = DataLoader(test_data, batch_size=config.batch_size, shuffle=False)
 
-    model = CustomCNN()
+    # Initialize the model with the determined number of classes
+    model = CustomCNN(num_classes=num_classes)
 
-    # The input_size for torchinfo.summary should reflect the new combined height
-    summary = torchinfo.summary(model, input_size=(config.batch_size, 1, (N_MELS + N_MFCC), MAX_TIME_STEPS))
+    # Print model summary using torchinfo
+    # Input shape: (batch_size, channels, height, width) for torchinfo
+    summary = torchinfo.summary(model, input_size=(config.batch_size, 1, N_MELS + N_MFCC, MAX_TIME_STEPS)) # Updated input height
     run.config['total_params'] = summary.total_params
     run.config['mult_adds'] = summary.total_mult_adds
+    print("\nModel Summary:")
+    print(summary)
+    print("Model initialization complete.")
 
-    print("model begin training")
-
+    # Set up device (GPU if available, otherwise CPU)
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     model = model.to(device)
 
-    #training optimizer and activation functions
-    criterion = nn.CrossEntropyLoss()
+    # Define loss function, optimizer, and learning rate scheduler
+    criterion = nn.CrossEntropyLoss() # Suitable for multi-class classification
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, min_lr=1e-6)
 
-    # early stopping
+    # Early stopping parameters
     best_val_loss = float('inf')
     patience_counter = 0
     early_stopping_patience = 5
 
+    print("Beginning model training...")
     for epoch in range(config.epochs):
-        model.train()
+        model.train() # Set model to training mode
         total_train_loss = 0.0
 
         for batch_idx, (inputs, labels) in enumerate(train_loader):
-            if (labels == -1).any():
-                print(f"Skipping batch {batch_idx} due to error in data loading.")
+            # Filter out samples where data loading failed (label == -1)
+            valid_indices = (labels != -1)
+            if not valid_indices.any(): # If all samples in batch failed
+                # print(f"Skipping training batch {batch_idx} due to all samples having label -1.")
                 continue
 
-            inputs, labels = inputs.to(device), labels.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            inputs, labels = inputs[valid_indices].to(device), labels[valid_indices].to(device)
+
+            optimizer.zero_grad()      # Clear previous gradients
+            outputs = model(inputs)    # Forward pass
+            loss = criterion(outputs, labels) # Calculate loss
+            loss.backward()            # Backward pass
+            optimizer.step()           # Update model parameters
             total_train_loss += loss.item()
 
         avg_train_loss = total_train_loss / len(train_loader)
 
-        model.eval()
+        model.eval() # Set model to evaluation mode
         correct, total = 0, 0
         total_test_loss = 0.0
         all_labels = []
         all_predictions = []
-        all_probabilities = []
+        all_probabilities = [] # For ROC AUC, if binary
 
-        #test data running
-        with torch.no_grad():
+        print("Evaluating on test set...")
+        with torch.no_grad(): # Disable gradient calculation for inference
             for inputs, labels in test_loader:
-                # Filter out samples with label -1
+                # Filter out samples where data loading failed
                 valid_indices = (labels != -1)
                 if not valid_indices.any():
-                    continue # Skip if no valid samples in batch
+                    # print(f"Skipping test batch {batch_idx} due to all samples having label -1.")
+                    continue
 
                 inputs = inputs[valid_indices].to(device)
                 labels = labels[valid_indices].to(device)
 
-                if inputs.size(0) == 0: # Check if any valid inputs remain
+                if inputs.size(0) == 0: # Ensure there are valid inputs left after filtering
                     continue
 
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
                 total_test_loss += loss.item()
 
-                probabilities = torch.softmax(outputs, dim=1)
-                _, predicted = torch.max(outputs, 1)
+                probabilities = torch.softmax(outputs, dim=1) # Get probabilities for each class
+                _, predicted = torch.max(outputs, 1) # Get the class with the highest probability
 
                 all_labels.extend(labels.cpu().numpy())
                 all_predictions.extend(predicted.cpu().numpy())
-                all_probabilities.extend(probabilities[:, 1].cpu().numpy())
+                # For binary classification ROC, collect probabilities of the positive class (class 1)
+                if num_classes == 2:
+                    all_probabilities.extend(probabilities[:, 1].cpu().numpy())
+                
                 total += labels.size(0)
                 correct += (predicted == labels).sum().item()
         
-        # Only calculate avg_test_loss if test_loader was not empty
-        if len(test_loader) > 0:
-            avg_test_loss = total_test_loss / len(test_loader)
-        else:
-            avg_test_loss = 0.0 # Or handle as an error/warning
-            print("Warning: Test loader is empty, test loss set to 0.0.")
+        avg_test_loss = total_test_loss / len(test_loader) if len(test_loader) > 0 else 0.0
+        accuracy = correct / total if total > 0 else 0.0
 
-        accuracy = correct / total if total > 0 else 0.0 # Handle division by zero
+        scheduler.step(avg_test_loss) # Adjust learning rate based on test loss
 
-        scheduler.step(avg_test_loss)
-
-        # Early Stopping check
+        # Early Stopping logic
         if avg_test_loss < best_val_loss:
             best_val_loss = avg_test_loss
             patience_counter = 0
-            # Save the best model
+            # Save the best model checkpoint
             torch.save(model.state_dict(), os.path.join(config.chkpt_path, run.id + '_best_model.pt'))
-            print(f"[{epoch+1}/{config.epochs}] Validation loss improved. Saving model.")
+            print(f"[{epoch+1}/{config.epochs}] Validation loss improved ({best_val_loss:.4f}). Saving model.")
         else:
             patience_counter += 1
             print(f"[{epoch+1}/{config.epochs}] Validation loss did not improve. Patience: {patience_counter}/{early_stopping_patience}")
@@ -262,6 +300,7 @@ def main(args):
                 print(f"Early stopping triggered after {epoch+1} epochs.")
                 break # Exit training loop
 
+        # Log metrics to Weights & Biases for the current epoch
         wandb.log({
             'epoch': epoch,
             'train_loss': avg_train_loss,
@@ -272,7 +311,9 @@ def main(args):
 
         print(f"[{epoch+1}/{config.epochs}] Train Loss: {avg_train_loss:.4f}, Test Loss: {avg_test_loss:.4f}, Test Accuracy: {accuracy:.4f}")
 
-    # Final evaluation after training
+    print("\nTraining complete. Performing final evaluation.")
+
+    # Load the best model for final evaluation
     model_save_path = os.path.join(config.chkpt_path, run.id + '_best_model.pt')
     if os.path.exists(model_save_path):
         model.load_state_dict(torch.load(model_save_path))
@@ -281,86 +322,113 @@ def main(args):
     else:
         print("Best model checkpoint not found. Using the last trained model for final evaluation.")
 
+    # Convert lists to numpy arrays for sklearn metrics
     y_true = np.array(all_labels)
     y_pred_classes = np.array(all_predictions)
     y_scores = np.array(all_probabilities)
 
-    # Ensure there are samples to evaluate
+    # Handle cases where no valid samples were processed in the test set
     if len(y_true) == 0:
         print("No valid samples for final evaluation. Skipping metrics and plots.")
         wandb.finish()
         return
 
-    # Get class names for classification report and confusion matrix
-    target_names = test_data.classes if hasattr(test_data, 'classes') and len(test_data.classes) == 2 else [str(i) for i in range(2)]
+    # Determine target names for classification report and confusion matrix
+    if len(test_data.classes) == num_classes:
+        target_names = test_data.classes
+    else:
+        unique_true_labels = np.unique(y_true)
+        target_names = [f'Class {l}' for l in unique_true_labels]
 
+    # ==================================
+    # Evaluation Metrics and Visualizations
+    # ==================================
     print("\n─────── Classification Report ───────")
-    report = classification_report(y_true, y_pred_classes, target_names=target_names, output_dict=True)
-    print(json.dumps(report, indent=4)) # Print pretty JSON
+    # zero_division=0 prevents warnings when a class has no predicted samples
+    report = classification_report(y_true, y_pred_classes, target_names=target_names, output_dict=True, zero_division=0)
+    print(json.dumps(report, indent=4)) # Pretty print JSON report
 
-    # Log individual metrics from the classification report
+    # Log individual metrics from the classification report to W&B
     wandb_log_metrics = {}
     for class_name, metrics in report.items():
-        if isinstance(metrics, dict):
+        if isinstance(metrics, dict): # For per-class metrics
             for metric_name, value in metrics.items():
                 if metric_name in ['precision', 'recall', 'f1-score', 'support']:
                     wandb_log_metrics[f'classification_report/{class_name}_{metric_name}'] = value
-        elif class_name in ['accuracy', 'macro avg', 'weighted avg']:
-            # For accuracy and overall averages
-            for metric_name, value in metrics.items():
-                 if metric_name in ['precision', 'recall', 'f1-score', 'support']:
-                    wandb_log_metrics[f'classification_report/{class_name.replace(" ", "_")}_{metric_name}'] = value
+        elif class_name in ['accuracy', 'macro avg', 'weighted avg']: # For overall metrics
             if class_name == 'accuracy':
-                wandb_log_metrics[f'classification_report/accuracy'] = metrics # Accuracy is directly a value, not a dict
+                wandb_log_metrics[f'classification_report/accuracy'] = metrics
+            else:
+                for metric_name, value in metrics.items():
+                    if metric_name in ['precision', 'recall', 'f1-score', 'support']:
+                        wandb_log_metrics[f'classification_report/{class_name.replace(" ", "_")}_{metric_name}'] = value
     
     wandb.log(wandb_log_metrics)
-    wandb.log({"classification_report_text": wandb.Html(classification_report(y_true, y_pred_classes, target_names=target_names))})
+    # Log classification report as an HTML table for better readability in W&B
+    wandb.log({"classification_report_text": wandb.Html(classification_report(y_true, y_pred_classes, target_names=target_names, zero_division=0))})
 
 
     print("\n─────── Confusion Matrix ───────")
     conf_matrix = confusion_matrix(y_true, y_pred_classes)
     plt.figure(figsize=(6,5))
     sns.heatmap(conf_matrix, annot=True, fmt='d', cmap='Blues', xticklabels=target_names, yticklabels=target_names)
-    plt.xlabel("Predicted")
-    plt.ylabel("True")
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
     plt.title("Confusion Matrix")
-    wandb.log({"confusion_matrix": wandb.Image(plt)})
+    wandb.log({"confusion_matrix": wandb.Image(plt)}) # Log plot to W&B
     plt.show()
     plt.close()
 
-    print("\n─────── ROC Curve ───────")
-    fpr, tpr, _ = roc_curve(y_true, y_scores)
-    roc_auc = auc(fpr, tpr)
+    # ROC Curve (only applicable for binary classification)
+    # This part should be updated to handle multi-class if num_classes > 2
+    if num_classes == 2:
+        print("\n─────── ROC Curve ───────")
+        try:
+            fpr, tpr, _ = roc_curve(y_true, y_scores)
+            roc_auc = auc(fpr, tpr)
 
-    plt.figure(figsize=(8, 6))
-    plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC Curve (AUC = {roc_auc:.2f})')
-    plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
-    plt.xlim([0.0, 1.0])
-    plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('True Positive Rate')
-    plt.title('Receiver Operating Characteristic (ROC) Curve')
-    plt.legend(loc='lower right')
-    wandb.log({"roc_curve": wandb.Image(plt)})
-    plt.show()
-    plt.close()
+            plt.figure(figsize=(8, 6))
+            plt.plot(fpr, tpr, color='blue', lw=2, label=f'ROC Curve (AUC = {roc_auc:.2f})')
+            plt.plot([0, 1], [0, 1], color='gray', linestyle='--')
+            plt.xlim([0.0, 1.0])
+            plt.ylim([0.0, 1.05])
+            plt.xlabel('False Positive Rate')
+            plt.ylabel('True Positive Rate')
+            plt.title('Receiver Operating Characteristic (ROC) Curve')
+            plt.legend(loc='lower right')
+            wandb.log({"roc_curve": wandb.Image(plt)}) # Log plot to W&B
+            plt.show()
+            plt.close()
 
-    print(f"✅ Model AUC Score: {roc_auc:.4f}")
-    wandb.log({'final_auc_score': roc_auc})
+            print(f"✅ Model AUC Score: {roc_auc:.4f}")
+            wandb.log({'final_auc_score': roc_auc})
+        except ValueError as e:
+            print(f"Could not plot ROC curve: {e}. Ensure there are at least two classes present in the true labels and predicted scores for ROC calculation.")
+            wandb.log({'final_auc_score': 'N/A'}) # Log 'N/A' if ROC fails
+    else:
+        print("\nSkipping ROC Curve: ROC is typically for binary classification.")
+        wandb.log({'final_auc_score': 'N/A (Multi-class)'})
 
-    wandb.finish()
 
+    wandb.finish() # End the Weights & Biases run
 
+# ==================================
+# Command-line Arguments
+# ==================================
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    parser.add_argument("-b", "--batch_size", type=int, default=16)
-    parser.add_argument("-e", "--epochs", type=int, default=20)
-    parser.add_argument("-lr", "--learning_rate", type=float, default=3e-4)
-    parser.add_argument("-m", "--momentum", type=float, default=0.0)
-    parser.add_argument("-wd", "--weight_decay", type=float, default=0.0)
-    parser.add_argument("--depth", type=int, default=18)
-    parser.add_argument("--width", type=int, default=64) 
-    parser.add_argument("--groups", type=int, default=1) 
-    parser.add_argument("--chkpt_path", type=str, default="./")
+    parser.add_argument("-b", "--batch_size", type=int, default=16, help="Batch size for training and testing.")
+    parser.add_argument("-e", "--epochs", type=int, default=20, help="Number of training epochs.")
+    parser.add_argument("-lr", "--learning_rate", type=float, default=3e-4, help="Initial learning rate for the optimizer.")
+    parser.add_argument("-m", "--momentum", type=float, default=0.0, help="Momentum for optimizer (not used by Adam default).")
+    parser.add_argument("-wd", "--weight_decay", type=float, default=0.0, help="Weight decay (L2 penalty) for optimizer.")
+    parser.add_argument("--depth", type=int, default=18, help="Model depth (placeholder, not used in this CustomCNN).")
+    parser.add_argument("--width", type=int, default=64, help="Model width (placeholder, not used in this CustomCNN).")
+    parser.add_argument("--groups", type=int, default=1, help="Number of groups for convolutions (placeholder).")
+    parser.add_argument("--chkpt_path", type=str, default="./checkpoints", help="Path to save model checkpoints.")
     args = parser.parse_args()
+
+    # Create checkpoint directory if it doesn't exist
+    os.makedirs(args.chkpt_path, exist_ok=True)
+
     main(args)
