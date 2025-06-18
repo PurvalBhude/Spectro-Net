@@ -141,8 +141,8 @@ def main(args):
     config = wandb.config
 
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
-    train_path = os.path.join(script_dir, 'datasets/audio/train')
-    test_path = os.path.join(script_dir, 'datasets/audio/test')
+    train_path = os.path.join(script_dir, 'datasets/train')
+    test_path = os.path.join(script_dir, 'datasets/test')
 
     print("data loading initiated")
 
