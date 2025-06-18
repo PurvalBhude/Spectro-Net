@@ -78,7 +78,7 @@ class CustomCNN(nn.Module):
             nn.Linear(256 * (N_MFCC // 16) * 25, 64), # Dynamic calculation: 256 * (40/16) * 25 = 256 * 2 * 25 = 12800 for N_MFCC=40
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(64, 2) # as there are two classes
+            nn.Linear(64, 7) # as there are two classes
         )
 
     def forward(self, x):

@@ -63,7 +63,7 @@ class CustomCNN(nn.Module):
             nn.Linear(256 * 8 * 25, 64), # From (256, 8, 25)
             nn.ReLU(),
             nn.Dropout(0.5),
-            nn.Linear(64, 2) # as there are two classes
+            nn.Linear(64, 7) # as there are two classes
         )
 
     def forward(self, x):
