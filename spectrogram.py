@@ -115,7 +115,7 @@ class AudioDataset(Dataset):
 
 def main(args):
     print("code started")
-    run = wandb.init(project="datasetname_spectrogram", config=vars(args))
+    run = wandb.init(project="iiit_hyerabad_spectrogram", config=vars(args))
     config = wandb.config
 
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
