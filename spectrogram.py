@@ -429,7 +429,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-b", "--batch_size", type=int, default=16)
-    parser.add_argument("-e", "--epochs", type=int, default=20)
+    parser.add_argument("-e", "--epochs", type=int, default=50)
     parser.add_argument("-lr", "--learning_rate", type=float, default=3e-4)
     parser.add_argument("-m", "--momentum", type=float, default=0.0) # Not used in Adam, but kept for consistency
     parser.add_argument("-wd", "--weight_decay", type=float, default=0.0)
