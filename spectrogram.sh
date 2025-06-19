@@ -2,7 +2,7 @@
 #SBATCH --partition=Brain3080
 #SBATCH --gres=gpu:rtx3080:1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=4
 #SBATCH --time=168:00:00
 #SBATCH --output=log/%x/%j/logs.out
 #SBATCH --error=log/%x/%j/errors.err
