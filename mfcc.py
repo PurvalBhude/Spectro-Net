@@ -149,7 +149,7 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    run = wandb.init(project="RAVDESS_mfcc", config=vars(args)) # New project name
+    run = wandb.init(project="vocalsound_mfcc", config=vars(args)) # New project name
     config = wandb.config
 
     # Define paths to your dataset directories
