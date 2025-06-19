@@ -159,7 +159,7 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    run = wandb.init(project="URDU-Dataset_combined", config=vars(args))
+    run = wandb.init(project="AudioMNIST_combined", config=vars(args))
     config = wandb.config
 
     # Define paths to your dataset directories

@@ -149,7 +149,7 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    run = wandb.init(project="URDU-Dataset_mfcc", config=vars(args)) # New project name
+    run = wandb.init(project="AudioMNIST_mfcc", config=vars(args)) # New project name
     config = wandb.config
 
     # Define paths to your dataset directories
@@ -418,7 +418,6 @@ if __name__ == "__main__":
     parser.add_argument("--chkpt_path", type=str, default="./checkpoints", help="Path to save model checkpoints.")
     args = parser.parse_args()
 
-    # Create checkpoint directory if it doesn't exist
     os.makedirs(args.chkpt_path, exist_ok=True)
 
     main(args)
