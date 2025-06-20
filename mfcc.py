@@ -149,7 +149,7 @@ def main(args):
     print("Code execution started.")
 
     # Initialize Weights & Biases run
-    run = wandb.init(project="AudioMNIST_mfcc", config=vars(args)) # New project name
+    run = wandb.init(project="GTZAN_mfcc", config=vars(args)) # New project name
     config = wandb.config
 
     # Define paths to your dataset directories
@@ -408,7 +408,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-b", "--batch_size", type=int, default=16, help="Batch size for training and testing.")
-    parser.add_argument("-e", "--epochs", type=int, default=50, help="Number of training epochs.")
+    parser.add_argument("-e", "--epochs", type=int, default=40, help="Number of training epochs.")
     parser.add_argument("-lr", "--learning_rate", type=float, default=3e-4, help="Initial learning rate for the optimizer.")
     parser.add_argument("-m", "--momentum", type=float, default=0.0, help="Momentum for optimizer (not used by Adam default).")
     parser.add_argument("-wd", "--weight_decay", type=float, default=0.0, help="Weight decay (L2 penalty) for optimizer.")

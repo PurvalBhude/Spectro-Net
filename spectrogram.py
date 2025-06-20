@@ -124,7 +124,7 @@ class AudioDataset(Dataset):
 
 def main(args):
     print("code started")
-    run = wandb.init(project="AudioMNIST_spectrogram", config=vars(args))
+    run = wandb.init(project="GTZAN_spectrogram", config=vars(args))
     config = wandb.config
 
     script_dir = os.path.dirname(os.path.abspath(__file__)) if '__file__' in locals() else os.getcwd()
@@ -429,7 +429,7 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     parser.add_argument("-b", "--batch_size", type=int, default=16)
-    parser.add_argument("-e", "--epochs", type=int, default=50)
+    parser.add_argument("-e", "--epochs", type=int, default=40)
     parser.add_argument("-lr", "--learning_rate", type=float, default=3e-4)
     parser.add_argument("-m", "--momentum", type=float, default=0.0) # Not used in Adam, but kept for consistency
     parser.add_argument("-wd", "--weight_decay", type=float, default=0.0)
